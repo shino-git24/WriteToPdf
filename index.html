@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF書き込みアプリ</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        #pdf-container {
+            border: 1px solid #ccc;
+            margin-top: 20px;
+        }
+        canvas {
+            display: block;
+            border-bottom: 1px solid #eee;
+        }
+        .dynamic-textarea {
+            position: absolute; /* 画面上の好きな位置に配置するため */
+            border: 2px solid #007bff;
+            outline: none;
+            font-size: 16px; /* PDFに書き込むサイズと合わせる */
+            line-height: 1.2;
+            background-color: rgba(255, 255, 255, 0.9);
+            z-index: 100; /* canvasより手前に表示する */
+        }
+        .mode-btn {
+            border: 1px solid #888;
+            padding: 5px 10px;
+            cursor: pointer;
+            background-color: #fff;
+        }
+        .mode-btn.active {
+            background-color: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        .preview-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none; /* 下のキャンバスを操作できるようにするため */
+            z-index: 101; /* テキストエリアよりは奥、PDFよりは手前 */
+        }
+
+        .color-btn {
+            width: 24px;
+            height: 24px;
+            border: 2px solid #ccc;
+            border-radius: 50%; /* 丸いボタンにする */
+            margin: 0 3px;
+            cursor: pointer;
+            padding: 0;
+        }
+        .color-btn.active {
+            border-color: #007bff; /* アクティブな色を青い枠線で囲む */
+            transform: scale(1.1);
+        }
+    </style>
+</head>
+<body>
+    <h1>PDF書き込みアプリ</h1>
+
+    <div id="controls" style="background-color: #f0f0f0; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
+        <div style="margin-bottom: 10px;">
+            <input type="file" id="pdf-input" accept="application/pdf">
+            <button id="save-btn" style="margin-left: 10px;">PDFを保存</button>
+            <button id="undo-btn" style="margin-left: 5px;">戻す</button>
+        </div>
+        <div id="page-nav" style="display: none; align-items: center; justify-content: center; margin-bottom: 10px; border-top: 1px solid #ccc; padding-top: 10px;">
+            <button id="prev-page-btn">&lt; 前へ</button>
+            <span id="page-num-display" style="margin: 0 15px; font-weight: bold;"></span>
+            <button id="next-page-btn">次へ &gt;</button>
+        </div>
+        <div id="mode-selector" style="display: none; border-top: 1px solid #ccc; padding-top: 10px;">
+            <strong>編集モード:</strong>
+            <button id="mode-text" class="mode-btn active">テキスト追加</button>
+            <button id="mode-rect" class="mode-btn">四角形で囲む</button>
+            <button id="mode-ellipse" class="mode-btn">丸で囲む</button>
+        </div>
+        
+        <div id="style-controls" style="display: none; border-top: 1px solid #ccc; padding-top: 10px;">
+            <strong>スタイル設定:</strong>
+            <span style="margin-left: 10px;">
+                <label for="font-size-input">文字サイズ:</label>
+                <input type="number" id="font-size-input" value="16" min="8" max="72" style="width: 50px;">
+            </span>
+
+            <span style="margin-left: 20px;">
+                <label>色:</label>
+                <div id="color-palette" style="display: inline-flex; vertical-align: middle;">
+                    <button class="color-btn" data-color="#000000" style="background-color: black;"></button>
+                    <button class="color-btn active" data-color="#ff0000" style="background-color: red;"></button>
+                    <button class="color-btn" data-color="#0000ff" style="background-color: blue;"></button>
+                    <button class="color-btn" data-color="#ffff00" style="background-color: yellow;"></button>
+                    <button class="color-btn" data-color="#ffffff" style="background-color: white;"></button>
+                </div>
+                <span style="font-size: 12px; margin-left: 5px;">（塗りつぶし）</span>
+            </span>
+            </div>
+        </div>
+
+    <div id="pdf-container" style="margin-top: 20px;"></div>
+  
+    <p>編集したいPDFファイルを選択してください。</p>
+
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://unpkg.com/@pdf-lib/fontkit@1.1.1/dist/fontkit.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+
+<script>
+    // --- HTML要素の取得 ---
+    const fileInput = document.getElementById('pdf-input');
+    const saveBtn = document.getElementById('save-btn');
+    const pdfContainer = document.getElementById('pdf-container');
+    const pageNav = document.getElementById('page-nav');
+    const prevPageBtn = document.getElementById('prev-page-btn');
+    const nextPageBtn = document.getElementById('next-page-btn');
+    const pageNumDisplay = document.getElementById('page-num-display');
+    const modeSelector = document.getElementById('mode-selector');
+    const modeTextBtn = document.getElementById('mode-text');
+    const modeRectBtn = document.getElementById('mode-rect');
+    const modeEllipseBtn = document.getElementById('mode-ellipse');
+    const styleControls = document.getElementById('style-controls');
+    const fontSizeInput = document.getElementById('font-size-input');
+    const colorPalette = document.getElementById('color-palette');
+    const colorButtons = document.querySelectorAll('.color-btn');
+    const undoBtn = document.getElementById('undo-btn');
+
+
+    // --- アプリケーションの状態管理 ---
+    let pdfDoc = null;
+    let originalPdfBytes = null;
+    let currentPage = 1;
+    let totalPages = 0;
+    let currentMode = 'text';
+    let isDrawing = false;
+    let startCoords = { x: 0, y: 0 };
+    let selectedColor = '#ff0000';
+    let historyStack = []; // 編集履歴を保存する配列
+    let japaneseFontBytes = null; // ★日本語フォントデータを保持する変数
+
+    // --- 初期化処理 ---
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
+
+    // ★★★ 日本語フォントを最初に読み込む非同期関数 ★★★
+    async function loadJapaneseFont() {
+        try {
+            // "事前準備"で配置したフォントファイルを指定
+            const fontUrl = './NotoSansJP-Regular.ttf';
+            japaneseFontBytes = await fetch(fontUrl).then(res => res.arrayBuffer());
+        } catch (error) {
+            console.error('日本語フォントの読み込みに失敗しました。', error);
+            alert('日本語フォントの読み込みに失敗しました。フォントファイルがindex.htmlと同じ場所にありますか？');
+        }
+    }
+    // アプリ起動時にフォントを読み込む
+    loadJapaneseFont();
+
+    // --- イベントリスナー ---
+    fileInput.addEventListener('change', handleFileSelect);
+    prevPageBtn.addEventListener('click', showPrevPage);
+    nextPageBtn.addEventListener('click', showNextPage);
+    saveBtn.addEventListener('click', () => {
+        if (!originalPdfBytes) {
+            alert('保存するPDFがありません。'); return;
+        }
+        const blob = new Blob([originalPdfBytes], { type: 'application/pdf' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `edited_${fileInput.files[0]?.name || 'document.pdf'}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href);
+    });
+    modeTextBtn.addEventListener('click', () => switchMode('text'));
+    modeRectBtn.addEventListener('click', () => switchMode('rect'));
+    modeEllipseBtn.addEventListener('click', () => switchMode('ellipse'));
+
+    colorButtons.forEach(button => {
+        button.addEventListener('click', (e) => {
+            // 他のボタンからactiveクラスを削除
+            colorButtons.forEach(btn => btn.classList.remove('active'));
+            // クリックされたボタンにactiveクラスを追加
+            e.target.classList.add('active');
+            // 選択された色を更新
+            selectedColor = e.target.dataset.color;
+        });
+    });
+
+    undoBtn.addEventListener('click', () => {
+        if (historyStack.length === 0) {
+            alert('これ以上戻れません。');
+            return;
+        }
+        
+        // 履歴から一番新しい状態を取り出して、現在の状態として復元する
+        originalPdfBytes = historyStack.pop();
+        
+        // 画面を再描画
+        (async () => {
+            pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
+            await renderPage(currentPage);
+        })();
+    });
+
+    // ■■■ 1. ファイル選択処理 ■■■
+    async function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        const fileReader = new FileReader();
+        fileReader.onload = async function() {
+            originalPdfBytes = new Uint8Array(this.result);
+            pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
+            totalPages = pdfDoc.numPages;
+            currentPage = 1;
+            
+            pageNav.style.display = 'flex';
+            modeSelector.style.display = 'block';
+            styleControls.style.display = 'block';
+            
+            await renderPage(currentPage);
+        };
+        fileReader.readAsArrayBuffer(file);
+    }
+    
+    // ■■■ 2. ページ描画処理（チラつき対策版） ■■■
+    async function renderPage(pageNum) {
+        // 先に新しいページとキャンバスをメモリ上に作成
+        const page = await pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.5 });
+
+        const pageDiv = document.createElement('div');
+        pageDiv.style.position = 'relative';
+
+        const canvas = document.createElement('canvas');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        pageDiv.appendChild(canvas);
+
+        // 新しいキャンバスにページ内容を描画
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+
+        // ★★★ 描画が完了してから、画面を更新する ★★★
+        pdfContainer.innerHTML = ''; // 古い内容をクリア
+        pdfContainer.appendChild(pageDiv); // 新しい内容を一瞬で表示
+
+        // イベントリスナーを再設定
+        pageDiv.addEventListener('click', (e) => handlePageClick(e, pageDiv));
+        pageDiv.addEventListener('mousedown', (e) => handleMouseDown(e));
+        pageDiv.addEventListener('mousemove', (e) => handleMouseMove(e));
+        pageDiv.addEventListener('mouseup', (e) => handleMouseUp(e));
+
+        updatePageNav();
+    }
+
+    // ■■■ 3. ページナビゲーション処理 ■■■
+    function updatePageNav() {
+        pageNumDisplay.textContent = `${currentPage} / ${totalPages}`;
+        prevPageBtn.disabled = (currentPage <= 1);
+        nextPageBtn.disabled = (currentPage >= totalPages);
+    }
+    
+    function showPrevPage() {
+        if (currentPage > 1) {
+            currentPage--;
+            renderPage(currentPage);
+        }
+    }
+    
+    function showNextPage() {
+        if (currentPage < totalPages) {
+            currentPage++;
+            renderPage(currentPage);
+        }
+    }
+    
+    // ■■■ 4. モード切替処理 ■■■
+    function switchMode(mode) {
+        currentMode = mode;
+        const buttons = [modeTextBtn, modeRectBtn, modeEllipseBtn];
+        buttons.forEach(btn => btn.classList.remove('active'));
+        
+        if (mode === 'text') {
+            modeTextBtn.classList.add('active');
+            pdfContainer.style.cursor = 'text';
+        } else if (mode === 'rect') {
+            modeRectBtn.classList.add('active');
+            pdfContainer.style.cursor = 'crosshair';
+        } else if (mode === 'ellipse') {
+            modeEllipseBtn.classList.add('active');
+            pdfContainer.style.cursor = 'crosshair';
+        }
+    }
+
+    function hexToRgb(hex) {
+        // #を取り除く
+        const h = hex.startsWith('#') ? hex.slice(1) : hex;
+        // R, G, Bの値を16進数から10進数に変換
+        const r = parseInt(h.substring(0, 2), 16);
+        const g = parseInt(h.substring(2, 4), 16);
+        const b = parseInt(h.substring(4, 6), 16);
+        // 0-1の範囲に正規化
+        return {
+            r: r / 255,
+            g: g / 255,
+            b: b / 255
+        };
+    }
+
+    // ■■■ 5. マウス操作と描画処理 ■■■
+    function handlePageClick(e, pageDiv) {
+        if (currentMode === 'text' && e.target.tagName === 'CANVAS') {
+            const rect = e.target.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            createTextArea(pageDiv, x, y);
+        }
+    }
+
+    function handleMouseDown(e) {
+        if ((currentMode !== 'rect' && currentMode !== 'ellipse') || e.target.tagName !== 'CANVAS') return;
+        isDrawing = true;
+        const canvas = e.target;
+        const rect = canvas.getBoundingClientRect();
+        startCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        const previewCanvas = document.createElement('canvas');
+        previewCanvas.className = 'preview-canvas';
+        previewCanvas.width = canvas.width;
+        previewCanvas.height = canvas.height;
+        canvas.parentElement.appendChild(previewCanvas);
+    }
+
+    function handleMouseMove(e) {
+        if (!isDrawing) return;
+        const canvas = e.target;
+        const previewCanvas = canvas.parentElement.querySelector('.preview-canvas');
+        if (!previewCanvas) return;
+        const ctx = previewCanvas.getContext('2d');
+        const rect = canvas.getBoundingClientRect();
+        const currentCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        const drawArea = {
+            x: Math.min(startCoords.x, currentCoords.x),
+            y: Math.min(startCoords.y, currentCoords.y),
+            width: Math.abs(startCoords.x - currentCoords.x),
+            height: Math.abs(startCoords.y - currentCoords.y)
+        };
+        if (currentMode === 'rect') {
+            ctx.rect(drawArea.x, drawArea.y, drawArea.width, drawArea.height);
+        } else if (currentMode === 'ellipse') {
+            ctx.ellipse(
+                drawArea.x + drawArea.width / 2, 
+                drawArea.y + drawArea.height / 2,
+                drawArea.width / 2,
+                drawArea.height / 2,
+                0, 0, 2 * Math.PI
+            );
+        }
+        ctx.stroke();
+    }
+
+    function handleMouseUp(e) {
+        const canvas = e.target;
+        const previewCanvas = canvas.parentElement.querySelector('.preview-canvas');
+        if (previewCanvas) {
+            previewCanvas.remove();
+        }
+        if (!isDrawing) return;
+        isDrawing = false;
+        const rect = canvas.getBoundingClientRect();
+        const endCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        const drawArea = {
+            x: Math.min(startCoords.x, endCoords.x),
+            y: Math.min(startCoords.y, endCoords.y),
+            width: Math.abs(startCoords.x - endCoords.x),
+            height: Math.abs(startCoords.y - endCoords.y)
+        };
+        if (drawArea.width > 2 && drawArea.height > 2) {
+            if (currentMode === 'rect') {
+                addRectToPdf(drawArea);
+            } else if (currentMode === 'ellipse') {
+                addEllipseToPdf(drawArea);
+            }
+        }
+    }
+
+    // ■■■ 6. テキストエリア生成とPDFへの書き込み関数群 ■■■
+    function createTextArea(parent, x, y) {
+        const existingTextarea = document.querySelector('.dynamic-textarea');
+        if (existingTextarea) existingTextarea.remove();
+        const textArea = document.createElement('textarea');
+        textArea.className = 'dynamic-textarea';
+        textArea.style.left = `${x}px`;
+        textArea.style.top = `${y}px`;
+        textArea.rows = 3;
+        textArea.cols = 20;
+        textArea.addEventListener('blur', async () => {
+            const text = textArea.value;
+            textArea.remove();
+            if (text.trim() === '') return;
+            await addTextToPdf(x, y, text);
+        });
+        parent.appendChild(textArea);
+        textArea.focus();
+    }
+
+    // ★★★ PDFにテキストを書き込む（日本語対応版） ★★★
+    async function addTextToPdf(x, y, text) {
+        if (!japaneseFontBytes) {
+            alert('日本語フォントがまだ読み込めていません。少し待ってから再度お試しください。');
+            return;
+        }
+        try {
+            historyStack.push(originalPdfBytes);
+            const { PDFDocument, rgb } = PDFLib; // StandardFontsはもう使わない
+            let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
+            
+            pdfDocToModify.registerFontkit(fontkit);
+            // ★★★ 日本語フォントをPDFに埋め込む ★★★
+            const customFont = await pdfDocToModify.embedFont(japaneseFontBytes);
+            
+            const pages = pdfDocToModify.getPages();
+            const targetPage = pages[currentPage - 1]; 
+            const { height } = targetPage.getSize();
+            const scale = 1.5;
+            const pdfX = x / scale;
+            const pdfY = height - (y / scale);
+            const selectedSize = parseInt(fontSizeInput.value, 10);
+            const colorRgb = hexToRgb(selectedColor); 
+            
+            const fontSize = selectedSize / scale;
+            const lineHeight = fontSize * 1.2;
+
+            const lines = text.split('\n');
+            lines.forEach((line, index) => {
+                targetPage.drawText(line, {
+                    x: pdfX,
+                    y: pdfY - (index * lineHeight),
+                    font: customFont, // ★埋め込んだフォントを指定
+                    size: fontSize, 
+                    color: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
+                });
+            });
+
+            originalPdfBytes = await pdfDocToModify.save();
+            pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
+            await renderPage(currentPage);
+        } catch (error) {
+            console.error('テキストの書き込みに失敗:', error);
+            alert('テキストの書き込みに失敗しました。');
+            historyStack.pop(); // エラー時は履歴を元に戻す
+        }
+    }
+    
+    async function addRectToPdf(rect) {
+        try {
+            historyStack.push(originalPdfBytes);
+            const { PDFDocument, rgb } = PDFLib;
+            let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
+            
+            pdfDocToModify.registerFontkit(fontkit);
+            
+            const pages = pdfDocToModify.getPages();
+            const targetPage = pages[currentPage - 1];
+            const { height } = targetPage.getSize();
+            const scale = 1.5;
+            const colorRgb = hexToRgb(selectedColor);
+
+            const drawOptions = {
+                x: rect.x / scale,
+                y: height - (rect.y + rect.height) / scale,
+                width: rect.width / scale,
+                height: rect.height / scale,
+                borderColor: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
+                borderWidth: 2,
+            };
+
+            // もし選択された色が白なら、塗りつぶしも白にする
+            if (selectedColor === '#ffffff') {
+                drawOptions.color = rgb(1, 1, 1);
+            }
+            
+            targetPage.drawRectangle(drawOptions);
+
+            originalPdfBytes = await pdfDocToModify.save();
+            pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
+            await renderPage(currentPage);
+        } catch (error) {
+            console.error('四角形の書き込みに失敗:', error);
+            alert('四角形の書き込みに失敗しました。');
+            historyStack.pop(); // エラー時は履歴を元に戻す
+        }
+    }
+    async function addEllipseToPdf(area) {
+        try {
+            historyStack.push(originalPdfBytes);
+            const { PDFDocument, rgb } = PDFLib;
+            let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
+            
+            pdfDocToModify.registerFontkit(fontkit);
+
+            const pages = pdfDocToModify.getPages();
+            const targetPage = pages[currentPage - 1];
+            const { height } = targetPage.getSize();
+            const scale = 1.5;
+            const colorRgb = hexToRgb(selectedColor);
+            const centerX = (area.x + area.width / 2) / scale;
+            const centerY = height - (area.y + area.height / 2) / scale;
+            const radiusX = (area.width / 2) / scale;
+            const radiusY = (area.height / 2) / scale;
+            const drawOptions = {
+                x: centerX,
+                y: centerY,
+                xScale: radiusX,
+                yScale: radiusY,
+                borderColor: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
+                borderWidth: 2,
+            };
+
+            // もし選択された色が白なら、塗りつぶしも白にする
+            if (selectedColor === '#ffffff') {
+                drawOptions.color = rgb(1, 1, 1);
+            }
+
+            targetPage.drawEllipse(drawOptions);
+
+            originalPdfBytes = await pdfDocToModify.save();
+            pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
+            await renderPage(currentPage);
+        } catch (error) {
+            console.error('楕円の書き込みに失敗:', error);
+            alert('楕円の書き込みに失敗しました。');
+            historyStack.pop(); // エラー時は履歴を元に戻す
+        }
+    }
+</script>
+
+</body>
+</html>
