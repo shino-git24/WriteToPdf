@@ -62,10 +62,10 @@
 
     <div id="controls" style="background-color: #f0f0f0; padding: 10px; border-radius: 5px; margin-bottom: 20px;">
         <div style="margin-bottom: 10px;">
-            <input type="file" id="pdf-input" accept="application/pdf">
-            <button id="save-btn" style="margin-left: 10px;">PDFを保存</button>
-            <button id="undo-btn" style="margin-left: 5px;">戻す</button>
-        </div>
+    <input type="file" id="pdf-input" accept="application/pdf">
+    <button id="save-btn" style="margin-left: 10px;">PDFを保存</button>
+    <button id="undo-btn" style="margin-left: 5px;">戻す</button>
+</div>
         <div id="page-nav" style="display: none; align-items: center; justify-content: center; margin-bottom: 10px; border-top: 1px solid #ccc; padding-top: 10px;">
             <button id="prev-page-btn">&lt; 前へ</button>
             <span id="page-num-display" style="margin: 0 15px; font-weight: bold;"></span>
@@ -76,6 +76,7 @@
             <button id="mode-text" class="mode-btn active">テキスト追加</button>
             <button id="mode-rect" class="mode-btn">四角形で囲む</button>
             <button id="mode-ellipse" class="mode-btn">丸で囲む</button>
+            <button id="mode-line" class="mode-btn">線を描画</button>
         </div>
         
         <div id="style-controls" style="display: none; border-top: 1px solid #ccc; padding-top: 10px;">
@@ -120,6 +121,7 @@
     const modeTextBtn = document.getElementById('mode-text');
     const modeRectBtn = document.getElementById('mode-rect');
     const modeEllipseBtn = document.getElementById('mode-ellipse');
+    const modeLineBtn = document.getElementById('mode-line');
     const styleControls = document.getElementById('style-controls');
     const fontSizeInput = document.getElementById('font-size-input');
     const colorPalette = document.getElementById('color-palette');
@@ -176,6 +178,7 @@
     modeTextBtn.addEventListener('click', () => switchMode('text'));
     modeRectBtn.addEventListener('click', () => switchMode('rect'));
     modeEllipseBtn.addEventListener('click', () => switchMode('ellipse'));
+    modeLineBtn.addEventListener('click', () => switchMode('line'));
 
     colorButtons.forEach(button => {
         button.addEventListener('click', (e) => {
@@ -277,22 +280,25 @@
     }
     
     // ■■■ 4. モード切替処理 ■■■
-    function switchMode(mode) {
-        currentMode = mode;
-        const buttons = [modeTextBtn, modeRectBtn, modeEllipseBtn];
-        buttons.forEach(btn => btn.classList.remove('active'));
-        
-        if (mode === 'text') {
-            modeTextBtn.classList.add('active');
-            pdfContainer.style.cursor = 'text';
-        } else if (mode === 'rect') {
-            modeRectBtn.classList.add('active');
-            pdfContainer.style.cursor = 'crosshair';
-        } else if (mode === 'ellipse') {
-            modeEllipseBtn.classList.add('active');
-            pdfContainer.style.cursor = 'crosshair';
-        }
+function switchMode(mode) {
+    currentMode = mode;
+    const buttons = [modeTextBtn, modeRectBtn, modeEllipseBtn, modeLineBtn];
+    buttons.forEach(btn => btn.classList.remove('active'));
+
+    if (mode === 'text') {
+        modeTextBtn.classList.add('active');
+        pdfContainer.style.cursor = 'text';
+    } else if (mode === 'rect') {
+        modeRectBtn.classList.add('active');
+        pdfContainer.style.cursor = 'crosshair';
+    } else if (mode === 'ellipse') {
+        modeEllipseBtn.classList.add('active');
+        pdfContainer.style.cursor = 'crosshair';
+    } else if (mode === 'line') {
+        modeLineBtn.classList.add('active');
+        pdfContainer.style.cursor = 'crosshair';
     }
+}
 
     function hexToRgb(hex) {
         // #を取り除く
@@ -320,75 +326,89 @@
     }
 
     function handleMouseDown(e) {
-        if ((currentMode !== 'rect' && currentMode !== 'ellipse') || e.target.tagName !== 'CANVAS') return;
-        isDrawing = true;
-        const canvas = e.target;
-        const rect = canvas.getBoundingClientRect();
-        startCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-        const previewCanvas = document.createElement('canvas');
-        previewCanvas.className = 'preview-canvas';
-        previewCanvas.width = canvas.width;
-        previewCanvas.height = canvas.height;
-        canvas.parentElement.appendChild(previewCanvas);
-    }
+    if ((currentMode !== 'rect' && currentMode !== 'ellipse' && currentMode !== 'line') || e.target.tagName !== 'CANVAS') return;
+    isDrawing = true;
+    const canvas = e.target;
+    const rect = canvas.getBoundingClientRect();
+    startCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const previewCanvas = document.createElement('canvas');
+    previewCanvas.className = 'preview-canvas';
+    previewCanvas.width = canvas.width;
+    previewCanvas.height = canvas.height;
+    canvas.parentElement.appendChild(previewCanvas);
+}
 
     function handleMouseMove(e) {
-        if (!isDrawing) return;
-        const canvas = e.target;
-        const previewCanvas = canvas.parentElement.querySelector('.preview-canvas');
-        if (!previewCanvas) return;
-        const ctx = previewCanvas.getContext('2d');
-        const rect = canvas.getBoundingClientRect();
-        const currentCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-        ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([5, 3]);
-        ctx.beginPath();
-        const drawArea = {
-            x: Math.min(startCoords.x, currentCoords.x),
-            y: Math.min(startCoords.y, currentCoords.y),
-            width: Math.abs(startCoords.x - currentCoords.x),
-            height: Math.abs(startCoords.y - currentCoords.y)
-        };
-        if (currentMode === 'rect') {
-            ctx.rect(drawArea.x, drawArea.y, drawArea.width, drawArea.height);
-        } else if (currentMode === 'ellipse') {
-            ctx.ellipse(
-                drawArea.x + drawArea.width / 2, 
-                drawArea.y + drawArea.height / 2,
-                drawArea.width / 2,
-                drawArea.height / 2,
-                0, 0, 2 * Math.PI
-            );
-        }
-        ctx.stroke();
+    if (!isDrawing) return;
+    const canvas = e.target;
+    const previewCanvas = canvas.parentElement.querySelector('.preview-canvas');
+    if (!previewCanvas) return;
+    const ctx = previewCanvas.getContext('2d');
+    const rect = canvas.getBoundingClientRect();
+    const currentCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    const drawArea = {
+        x: Math.min(startCoords.x, currentCoords.x),
+        y: Math.min(startCoords.y, currentCoords.y),
+        width: Math.abs(startCoords.x - currentCoords.x),
+        height: Math.abs(startCoords.y - currentCoords.y)
+    };
+    if (currentMode === 'rect') {
+        ctx.rect(drawArea.x, drawArea.y, drawArea.width, drawArea.height);
+    } else if (currentMode === 'ellipse') {
+        ctx.ellipse(
+            drawArea.x + drawArea.width / 2, 
+            drawArea.y + drawArea.height / 2,
+            drawArea.width / 2,
+            drawArea.height / 2,
+            0, 0, 2 * Math.PI
+        );
+    } else if (currentMode === 'line') {
+        ctx.moveTo(startCoords.x, startCoords.y);
+        ctx.lineTo(currentCoords.x, currentCoords.y);
     }
+    ctx.stroke();
+}
 
     function handleMouseUp(e) {
-        const canvas = e.target;
-        const previewCanvas = canvas.parentElement.querySelector('.preview-canvas');
-        if (previewCanvas) {
-            previewCanvas.remove();
+    const canvas = e.target;
+    const previewCanvas = canvas.parentElement.querySelector('.preview-canvas');
+    if (previewCanvas) {
+        previewCanvas.remove();
+    }
+    if (!isDrawing) return;
+    isDrawing = false;
+    const rect = canvas.getBoundingClientRect();
+    const endCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+
+    // 線を描画した場合
+    if (currentMode === 'line') {
+        // 開始点と終了点が離れている場合のみ描画
+        if (Math.abs(startCoords.x - endCoords.x) > 2 || Math.abs(startCoords.y - endCoords.y) > 2) {
+            addLineToPdf(startCoords, endCoords);
         }
-        if (!isDrawing) return;
-        isDrawing = false;
-        const rect = canvas.getBoundingClientRect();
-        const endCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-        const drawArea = {
-            x: Math.min(startCoords.x, endCoords.x),
-            y: Math.min(startCoords.y, endCoords.y),
-            width: Math.abs(startCoords.x - endCoords.x),
-            height: Math.abs(startCoords.y - endCoords.y)
-        };
-        if (drawArea.width > 2 && drawArea.height > 2) {
-            if (currentMode === 'rect') {
-                addRectToPdf(drawArea);
-            } else if (currentMode === 'ellipse') {
-                addEllipseToPdf(drawArea);
-            }
+        return; // ここで処理を終了
+    }
+
+    // 四角形や楕円を描画した場合
+    const drawArea = {
+        x: Math.min(startCoords.x, endCoords.x),
+        y: Math.min(startCoords.y, endCoords.y),
+        width: Math.abs(startCoords.x - endCoords.x),
+        height: Math.abs(startCoords.y - endCoords.y)
+    };
+    if (drawArea.width > 2 && drawArea.height > 2) {
+        if (currentMode === 'rect') {
+            addRectToPdf(drawArea);
+        } else if (currentMode === 'ellipse') {
+            addEllipseToPdf(drawArea);
         }
     }
+}
 
     // ■■■ 6. テキストエリア生成とPDFへの書き込み関数群 ■■■
     function createTextArea(parent, x, y) {
@@ -539,6 +559,38 @@
             historyStack.pop(); // エラー時は履歴を元に戻す
         }
     }
+
+    async function addLineToPdf(start, end) {
+    try {
+        historyStack.push(originalPdfBytes);
+        const { PDFDocument, rgb } = PDFLib;
+        let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
+
+        pdfDocToModify.registerFontkit(fontkit);
+
+        const pages = pdfDocToModify.getPages();
+        const targetPage = pages[currentPage - 1];
+        const { height } = targetPage.getSize();
+        const scale = 1.5;
+        const colorRgb = hexToRgb(selectedColor);
+
+        targetPage.drawLine({
+            start: { x: start.x / scale, y: height - (start.y / scale) },
+            end: { x: end.x / scale, y: height - (end.y / scale) },
+            thickness: 2,
+            color: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
+        });
+
+        originalPdfBytes = await pdfDocToModify.save();
+        pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
+        await renderPage(currentPage);
+    } catch (error) {
+        console.error('線の書き込みに失敗:', error);
+        alert('線の書き込みに失敗しました。');
+        historyStack.pop(); // エラー時は履歴を元に戻す
+    }
+}
+
 </script>
 
 </body>
