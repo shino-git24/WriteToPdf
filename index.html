@@ -412,50 +412,82 @@
         textArea.focus();
     }
 
-    async function addTextToPdf(pdfX, pdfY, text) { // ★修正: 引数をPDF座標(pdfX, pdfY)に変更
-        if (!japaneseFontBytes) {
-            alert('日本語フォントがまだ読み込めていません。'); return;
-        }
-        try {
-            historyStack.push(originalPdfBytes);
-            const { PDFDocument, rgb } = PDFLib;
-            let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
-            
-            pdfDocToModify.registerFontkit(fontkit);
-            const customFont = await pdfDocToModify.embedFont(japaneseFontBytes);
-            
-            const pages = pdfDocToModify.getPages();
-            const targetPage = pages[currentPage - 1]; 
-            
-            // ★修正: 座標変換の計算を削除し、引数をそのまま使用
-            const selectedSize = parseInt(fontSizeInput.value, 10);
-            const colorRgb = hexToRgb(selectedColor); 
-            
-            // ★修正: フォントサイズもビューポートのスケールを元に計算
-            const fontSize = selectedSize / currentViewport.scale;
-            const lineHeight = fontSize * 1.2;
-
-            const lines = text.split('\n');
-            lines.forEach((line, index) => {
-                targetPage.drawText(line, {
-                    x: pdfX,
-                    // ★修正: クリックした位置がテキストの左上に来るようにベースラインを調整
-                    y: pdfY - fontSize - (index * lineHeight),
-                    font: customFont,
-                    size: fontSize, 
-                    color: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
-                });
-            });
-
-            originalPdfBytes = await pdfDocToModify.save();
-            pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
-            await renderPage(currentPage);
-        } catch (error) {
-            console.error('テキストの書き込みに失敗:', error);
-            alert('テキストの書き込みに失敗しました。');
-            historyStack.pop();
-        }
+async function addTextToPdf(pdfX, pdfY, text) {
+    if (!japaneseFontBytes) {
+        alert('日本語フォントがまだ読み込めていません。');
+        return;
     }
+    try {
+        historyStack.push(originalPdfBytes);
+        const { PDFDocument, rgb, degrees } = PDFLib;
+        let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
+
+        pdfDocToModify.registerFontkit(fontkit);
+        const customFont = await pdfDocToModify.embedFont(japaneseFontBytes);
+
+        const pages = pdfDocToModify.getPages();
+        const targetPage = pages[currentPage - 1];
+
+        const selectedSize = parseInt(fontSizeInput.value, 10);
+        const colorRgb = hexToRgb(selectedColor);
+        const fontSize = selectedSize / currentViewport.scale;
+        const lineHeight = fontSize * 1.2;
+        
+        const pageRotation = targetPage.getRotation().angle;
+
+        const lines = text.split('\n');
+        lines.forEach((line, index) => {
+            
+            // テキストの高さに相当するオフセット値（ベースライン調整用）
+            const textHeightOffset = fontSize + (index * lineHeight);
+
+            const options = {
+                font: customFont,
+                size: fontSize,
+                color: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
+            };
+
+            // ★★★★★ 最終修正箇所 ★★★★★
+            // デバッグ結果に基づき、正しい座標計算と回転を適用
+            switch (pageRotation) {
+                case 90:
+                    // テキストをページに合わせて90度回転させる
+                    options.rotate = degrees(90);
+                    // 回転後のテキストの左上がクリック位置に来るように座標を決定
+                    options.x = pdfX + textHeightOffset;
+                    options.y = pdfY;
+                    break;
+                case 180:
+                    // テキストを180度回転
+                    options.rotate = degrees(180);
+                    options.x = pdfX;
+                    options.y = pdfY + textHeightOffset;
+                    break;
+                case 270:
+                    // テキストを270度回転
+                    options.rotate = degrees(270);
+                    options.x = pdfX - textHeightOffset;
+                    options.y = pdfY;
+                    break;
+                default: // 0度
+                    options.rotate = degrees(0);
+                    options.x = pdfX;
+                    options.y = pdfY - textHeightOffset;
+                    break;
+            }
+
+            targetPage.drawText(line, options);
+        });
+
+        originalPdfBytes = await pdfDocToModify.save();
+        pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
+        await renderPage(currentPage);
+    } catch (error) {
+        console.error('テキストの書き込みに失敗:', error);
+        alert('テキストの書き込みに失敗しました。');
+        historyStack.pop();
+    }
+}
     
     // ★修正: 引数をPDF座標エリア(pdfRect)に変更
     async function addRectToPdf(pdfRect) {
