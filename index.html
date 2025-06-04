@@ -138,16 +138,15 @@
     let isDrawing = false;
     let startCoords = { x: 0, y: 0 };
     let selectedColor = '#ff0000';
-    let historyStack = []; // 編集履歴を保存する配列
-    let japaneseFontBytes = null; // ★日本語フォントデータを保持する変数
+    let historyStack = [];
+    let japaneseFontBytes = null;
+    let currentViewport = null; // ★修正: 表示中のページのビューポートを保持する変数
 
     // --- 初期化処理 ---
     pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
 
-    // ★★★ 日本語フォントを最初に読み込む非同期関数 ★★★
     async function loadJapaneseFont() {
         try {
-            // "事前準備"で配置したフォントファイルを指定
             const fontUrl = './NotoSansJP-Regular.ttf';
             japaneseFontBytes = await fetch(fontUrl).then(res => res.arrayBuffer());
         } catch (error) {
@@ -155,7 +154,6 @@
             alert('日本語フォントの読み込みに失敗しました。フォントファイルがindex.htmlと同じ場所にありますか？');
         }
     }
-    // アプリ起動時にフォントを読み込む
     loadJapaneseFont();
 
     // --- イベントリスナー ---
@@ -182,11 +180,8 @@
 
     colorButtons.forEach(button => {
         button.addEventListener('click', (e) => {
-            // 他のボタンからactiveクラスを削除
             colorButtons.forEach(btn => btn.classList.remove('active'));
-            // クリックされたボタンにactiveクラスを追加
             e.target.classList.add('active');
-            // 選択された色を更新
             selectedColor = e.target.dataset.color;
         });
     });
@@ -197,10 +192,8 @@
             return;
         }
         
-        // 履歴から一番新しい状態を取り出して、現在の状態として復元する
         originalPdfBytes = historyStack.pop();
         
-        // 画面を再描画
         (async () => {
             pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
             await renderPage(currentPage);
@@ -230,9 +223,11 @@
     
     // ■■■ 2. ページ描画処理（チラつき対策版） ■■■
     async function renderPage(pageNum) {
-        // 先に新しいページとキャンバスをメモリ上に作成
         const page = await pdfDoc.getPage(pageNum);
-        const viewport = page.getViewport({ scale: 1.5 });
+        
+        // ★修正: viewportをグローバル変数に保存し、後続の座標変換で利用する
+        currentViewport = page.getViewport({ scale: 1.5 });
+        const viewport = currentViewport;
 
         const pageDiv = document.createElement('div');
         pageDiv.style.position = 'relative';
@@ -241,15 +236,12 @@
         canvas.height = viewport.height;
         canvas.width = viewport.width;
         pageDiv.appendChild(canvas);
-
-        // 新しいキャンバスにページ内容を描画
+        
         await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
 
-        // ★★★ 描画が完了してから、画面を更新する ★★★
-        pdfContainer.innerHTML = ''; // 古い内容をクリア
-        pdfContainer.appendChild(pageDiv); // 新しい内容を一瞬で表示
+        pdfContainer.innerHTML = ''; 
+        pdfContainer.appendChild(pageDiv);
 
-        // イベントリスナーを再設定
         pageDiv.addEventListener('click', (e) => handlePageClick(e, pageDiv));
         pageDiv.addEventListener('mousedown', (e) => handleMouseDown(e));
         pageDiv.addEventListener('mousemove', (e) => handleMouseMove(e));
@@ -280,39 +272,26 @@
     }
     
     // ■■■ 4. モード切替処理 ■■■
-function switchMode(mode) {
-    currentMode = mode;
-    const buttons = [modeTextBtn, modeRectBtn, modeEllipseBtn, modeLineBtn];
-    buttons.forEach(btn => btn.classList.remove('active'));
+    function switchMode(mode) {
+        currentMode = mode;
+        const buttons = [modeTextBtn, modeRectBtn, modeEllipseBtn, modeLineBtn];
+        buttons.forEach(btn => btn.classList.remove('active'));
 
-    if (mode === 'text') {
-        modeTextBtn.classList.add('active');
-        pdfContainer.style.cursor = 'text';
-    } else if (mode === 'rect') {
-        modeRectBtn.classList.add('active');
-        pdfContainer.style.cursor = 'crosshair';
-    } else if (mode === 'ellipse') {
-        modeEllipseBtn.classList.add('active');
-        pdfContainer.style.cursor = 'crosshair';
-    } else if (mode === 'line') {
-        modeLineBtn.classList.add('active');
-        pdfContainer.style.cursor = 'crosshair';
+        if (mode === 'text') {
+            modeTextBtn.classList.add('active');
+            pdfContainer.style.cursor = 'text';
+        } else if (mode === 'rect' || mode === 'ellipse' || mode === 'line') {
+            document.querySelector(`[id="mode-${mode}"]`).classList.add('active');
+            pdfContainer.style.cursor = 'crosshair';
+        }
     }
-}
 
     function hexToRgb(hex) {
-        // #を取り除く
         const h = hex.startsWith('#') ? hex.slice(1) : hex;
-        // R, G, Bの値を16進数から10進数に変換
         const r = parseInt(h.substring(0, 2), 16);
         const g = parseInt(h.substring(2, 4), 16);
         const b = parseInt(h.substring(4, 6), 16);
-        // 0-1の範囲に正規化
-        return {
-            r: r / 255,
-            g: g / 255,
-            b: b / 255
-        };
+        return { r: r / 255, g: g / 255, b: b / 255 };
     }
 
     // ■■■ 5. マウス操作と描画処理 ■■■
@@ -326,143 +305,143 @@ function switchMode(mode) {
     }
 
     function handleMouseDown(e) {
-    if ((currentMode !== 'rect' && currentMode !== 'ellipse' && currentMode !== 'line') || e.target.tagName !== 'CANVAS') return;
-    isDrawing = true;
-    const canvas = e.target;
-    const rect = canvas.getBoundingClientRect();
-    startCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const previewCanvas = document.createElement('canvas');
-    previewCanvas.className = 'preview-canvas';
-    previewCanvas.width = canvas.width;
-    previewCanvas.height = canvas.height;
-    canvas.parentElement.appendChild(previewCanvas);
-}
+        if ((currentMode !== 'rect' && currentMode !== 'ellipse' && currentMode !== 'line') || e.target.tagName !== 'CANVAS') return;
+        isDrawing = true;
+        const canvas = e.target;
+        const rect = canvas.getBoundingClientRect();
+        startCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        
+        const previewCanvas = document.createElement('canvas');
+        previewCanvas.className = 'preview-canvas';
+        previewCanvas.width = canvas.width;
+        previewCanvas.height = canvas.height;
+        canvas.parentElement.appendChild(previewCanvas);
+    }
 
     function handleMouseMove(e) {
-    if (!isDrawing) return;
-    const canvas = e.target;
-    const previewCanvas = canvas.parentElement.querySelector('.preview-canvas');
-    if (!previewCanvas) return;
-    const ctx = previewCanvas.getContext('2d');
-    const rect = canvas.getBoundingClientRect();
-    const currentCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([5, 3]);
-    ctx.beginPath();
-    const drawArea = {
-        x: Math.min(startCoords.x, currentCoords.x),
-        y: Math.min(startCoords.y, currentCoords.y),
-        width: Math.abs(startCoords.x - currentCoords.x),
-        height: Math.abs(startCoords.y - currentCoords.y)
-    };
-    if (currentMode === 'rect') {
-        ctx.rect(drawArea.x, drawArea.y, drawArea.width, drawArea.height);
-    } else if (currentMode === 'ellipse') {
-        ctx.ellipse(
-            drawArea.x + drawArea.width / 2, 
-            drawArea.y + drawArea.height / 2,
-            drawArea.width / 2,
-            drawArea.height / 2,
-            0, 0, 2 * Math.PI
-        );
-    } else if (currentMode === 'line') {
-        ctx.moveTo(startCoords.x, startCoords.y);
-        ctx.lineTo(currentCoords.x, currentCoords.y);
+        if (!isDrawing) return;
+        const canvas = e.target;
+        const previewCanvas = canvas.parentElement.querySelector('.preview-canvas');
+        if (!previewCanvas) return;
+        const ctx = previewCanvas.getContext('2d');
+        const rect = canvas.getBoundingClientRect();
+        const currentCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        if (currentMode === 'rect') {
+            ctx.rect(startCoords.x, startCoords.y, currentCoords.x - startCoords.x, currentCoords.y - startCoords.y);
+        } else if (currentMode === 'ellipse') {
+            const centerX = (startCoords.x + currentCoords.x) / 2;
+            const centerY = (startCoords.y + currentCoords.y) / 2;
+            const radiusX = Math.abs(startCoords.x - currentCoords.x) / 2;
+            const radiusY = Math.abs(startCoords.y - currentCoords.y) / 2;
+            ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
+        } else if (currentMode === 'line') {
+            ctx.moveTo(startCoords.x, startCoords.y);
+            ctx.lineTo(currentCoords.x, currentCoords.y);
+        }
+        ctx.stroke();
     }
-    ctx.stroke();
-}
 
     function handleMouseUp(e) {
-    const canvas = e.target;
-    const previewCanvas = canvas.parentElement.querySelector('.preview-canvas');
-    if (previewCanvas) {
-        previewCanvas.remove();
-    }
-    if (!isDrawing) return;
-    isDrawing = false;
-    const rect = canvas.getBoundingClientRect();
-    const endCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        if (!isDrawing) return;
+        isDrawing = false;
 
-    // 線を描画した場合
-    if (currentMode === 'line') {
-        // 開始点と終了点が離れている場合のみ描画
-        if (Math.abs(startCoords.x - endCoords.x) > 2 || Math.abs(startCoords.y - endCoords.y) > 2) {
-            addLineToPdf(startCoords, endCoords);
-        }
-        return; // ここで処理を終了
-    }
+        const canvas = e.target;
+        const previewCanvas = canvas.parentElement.querySelector('.preview-canvas');
+        if (previewCanvas) previewCanvas.remove();
 
-    // 四角形や楕円を描画した場合
-    const drawArea = {
-        x: Math.min(startCoords.x, endCoords.x),
-        y: Math.min(startCoords.y, endCoords.y),
-        width: Math.abs(startCoords.x - endCoords.x),
-        height: Math.abs(startCoords.y - endCoords.y)
-    };
-    if (drawArea.width > 2 && drawArea.height > 2) {
-        if (currentMode === 'rect') {
-            addRectToPdf(drawArea);
-        } else if (currentMode === 'ellipse') {
-            addEllipseToPdf(drawArea);
+        const rect = canvas.getBoundingClientRect();
+        const endCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        
+        // ★修正: キャンバス座標をPDF座標に変換
+        if (!currentViewport) return;
+        const pdfStart = currentViewport.convertToPdfPoint(startCoords.x, startCoords.y);
+        const pdfEnd = currentViewport.convertToPdfPoint(endCoords.x, endCoords.y);
+
+        if (currentMode === 'line') {
+            if (Math.abs(startCoords.x - endCoords.x) > 2 || Math.abs(startCoords.y - endCoords.y) > 2) {
+                // ★修正: 変換後のPDF座標を渡す
+                addLineToPdf({ x: pdfStart[0], y: pdfStart[1] }, { x: pdfEnd[0], y: pdfEnd[1] });
+            }
+        } else {
+            const pdfArea = {
+                x: Math.min(pdfStart[0], pdfEnd[0]),
+                y: Math.min(pdfStart[1], pdfEnd[1]),
+                width: Math.abs(pdfStart[0] - pdfEnd[0]),
+                height: Math.abs(pdfStart[1] - pdfEnd[1]),
+            };
+            if (pdfArea.width > 1 && pdfArea.height > 1) {
+                if (currentMode === 'rect') {
+                    // ★修正: 変換後のPDF座標エリアを渡す
+                    addRectToPdf(pdfArea);
+                } else if (currentMode === 'ellipse') {
+                    // ★修正: 変換後のPDF座標エリアを渡す
+                    addEllipseToPdf(pdfArea);
+                }
+            }
         }
     }
-}
 
     // ■■■ 6. テキストエリア生成とPDFへの書き込み関数群 ■■■
     function createTextArea(parent, x, y) {
         const existingTextarea = document.querySelector('.dynamic-textarea');
         if (existingTextarea) existingTextarea.remove();
+        
         const textArea = document.createElement('textarea');
         textArea.className = 'dynamic-textarea';
         textArea.style.left = `${x}px`;
         textArea.style.top = `${y}px`;
         textArea.rows = 3;
         textArea.cols = 20;
+        
         textArea.addEventListener('blur', async () => {
             const text = textArea.value;
             textArea.remove();
             if (text.trim() === '') return;
-            await addTextToPdf(x, y, text);
+            // ★修正: キャンバス座標をPDF座標に変換してから書き込み関数に渡す
+            if (!currentViewport) return;
+            const pdfPoint = currentViewport.convertToPdfPoint(x, y);
+            await addTextToPdf(pdfPoint[0], pdfPoint[1], text);
         });
+        
         parent.appendChild(textArea);
         textArea.focus();
     }
 
-    // ★★★ PDFにテキストを書き込む（日本語対応版） ★★★
-    async function addTextToPdf(x, y, text) {
+    async function addTextToPdf(pdfX, pdfY, text) { // ★修正: 引数をPDF座標(pdfX, pdfY)に変更
         if (!japaneseFontBytes) {
-            alert('日本語フォントがまだ読み込めていません。少し待ってから再度お試しください。');
-            return;
+            alert('日本語フォントがまだ読み込めていません。'); return;
         }
         try {
             historyStack.push(originalPdfBytes);
-            const { PDFDocument, rgb } = PDFLib; // StandardFontsはもう使わない
+            const { PDFDocument, rgb } = PDFLib;
             let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
             
             pdfDocToModify.registerFontkit(fontkit);
-            // ★★★ 日本語フォントをPDFに埋め込む ★★★
             const customFont = await pdfDocToModify.embedFont(japaneseFontBytes);
             
             const pages = pdfDocToModify.getPages();
             const targetPage = pages[currentPage - 1]; 
-            const { height } = targetPage.getSize();
-            const scale = 1.5;
-            const pdfX = x / scale;
-            const pdfY = height - (y / scale);
+            
+            // ★修正: 座標変換の計算を削除し、引数をそのまま使用
             const selectedSize = parseInt(fontSizeInput.value, 10);
             const colorRgb = hexToRgb(selectedColor); 
             
-            const fontSize = selectedSize / scale;
+            // ★修正: フォントサイズもビューポートのスケールを元に計算
+            const fontSize = selectedSize / currentViewport.scale;
             const lineHeight = fontSize * 1.2;
 
             const lines = text.split('\n');
             lines.forEach((line, index) => {
                 targetPage.drawText(line, {
                     x: pdfX,
-                    y: pdfY - (index * lineHeight),
-                    font: customFont, // ★埋め込んだフォントを指定
+                    // ★修正: クリックした位置がテキストの左上に来るようにベースラインを調整
+                    y: pdfY - fontSize - (index * lineHeight),
+                    font: customFont,
                     size: fontSize, 
                     color: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
                 });
@@ -474,34 +453,31 @@ function switchMode(mode) {
         } catch (error) {
             console.error('テキストの書き込みに失敗:', error);
             alert('テキストの書き込みに失敗しました。');
-            historyStack.pop(); // エラー時は履歴を元に戻す
+            historyStack.pop();
         }
     }
     
-    async function addRectToPdf(rect) {
+    // ★修正: 引数をPDF座標エリア(pdfRect)に変更
+    async function addRectToPdf(pdfRect) {
         try {
             historyStack.push(originalPdfBytes);
             const { PDFDocument, rgb } = PDFLib;
             let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
             
-            pdfDocToModify.registerFontkit(fontkit);
-            
             const pages = pdfDocToModify.getPages();
             const targetPage = pages[currentPage - 1];
-            const { height } = targetPage.getSize();
-            const scale = 1.5;
             const colorRgb = hexToRgb(selectedColor);
 
+            // ★修正: 座標変換の計算を削除
             const drawOptions = {
-                x: rect.x / scale,
-                y: height - (rect.y + rect.height) / scale,
-                width: rect.width / scale,
-                height: rect.height / scale,
+                x: pdfRect.x,
+                y: pdfRect.y,
+                width: pdfRect.width,
+                height: pdfRect.height,
                 borderColor: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
                 borderWidth: 2,
             };
 
-            // もし選択された色が白なら、塗りつぶしも白にする
             if (selectedColor === '#ffffff') {
                 drawOptions.color = rgb(1, 1, 1);
             }
@@ -514,36 +490,31 @@ function switchMode(mode) {
         } catch (error) {
             console.error('四角形の書き込みに失敗:', error);
             alert('四角形の書き込みに失敗しました。');
-            historyStack.pop(); // エラー時は履歴を元に戻す
+            historyStack.pop();
         }
     }
-    async function addEllipseToPdf(area) {
+    
+    // ★修正: 引数をPDF座標エリア(pdfArea)に変更
+    async function addEllipseToPdf(pdfArea) {
         try {
             historyStack.push(originalPdfBytes);
             const { PDFDocument, rgb } = PDFLib;
             let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
-            
-            pdfDocToModify.registerFontkit(fontkit);
 
             const pages = pdfDocToModify.getPages();
             const targetPage = pages[currentPage - 1];
-            const { height } = targetPage.getSize();
-            const scale = 1.5;
             const colorRgb = hexToRgb(selectedColor);
-            const centerX = (area.x + area.width / 2) / scale;
-            const centerY = height - (area.y + area.height / 2) / scale;
-            const radiusX = (area.width / 2) / scale;
-            const radiusY = (area.height / 2) / scale;
+
+            // ★修正: 座標変換の計算を削除
             const drawOptions = {
-                x: centerX,
-                y: centerY,
-                xScale: radiusX,
-                yScale: radiusY,
+                x: pdfArea.x + pdfArea.width / 2,
+                y: pdfArea.y + pdfArea.height / 2,
+                xScale: pdfArea.width / 2,
+                yScale: pdfArea.height / 2,
                 borderColor: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
                 borderWidth: 2,
             };
 
-            // もし選択された色が白なら、塗りつぶしも白にする
             if (selectedColor === '#ffffff') {
                 drawOptions.color = rgb(1, 1, 1);
             }
@@ -556,41 +527,38 @@ function switchMode(mode) {
         } catch (error) {
             console.error('楕円の書き込みに失敗:', error);
             alert('楕円の書き込みに失敗しました。');
-            historyStack.pop(); // エラー時は履歴を元に戻す
+            historyStack.pop();
         }
     }
 
+    // ★修正: 引数をPDF座標(start, end)に変更
     async function addLineToPdf(start, end) {
-    try {
-        historyStack.push(originalPdfBytes);
-        const { PDFDocument, rgb } = PDFLib;
-        let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
+        try {
+            historyStack.push(originalPdfBytes);
+            const { PDFDocument, rgb } = PDFLib;
+            let pdfDocToModify = await PDFDocument.load(originalPdfBytes);
 
-        pdfDocToModify.registerFontkit(fontkit);
+            const pages = pdfDocToModify.getPages();
+            const targetPage = pages[currentPage - 1];
+            const colorRgb = hexToRgb(selectedColor);
+            
+            // ★修正: 座標変換の計算を削除
+            targetPage.drawLine({
+                start: { x: start.x, y: start.y },
+                end: { x: end.x, y: end.y },
+                thickness: 2,
+                color: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
+            });
 
-        const pages = pdfDocToModify.getPages();
-        const targetPage = pages[currentPage - 1];
-        const { height } = targetPage.getSize();
-        const scale = 1.5;
-        const colorRgb = hexToRgb(selectedColor);
-
-        targetPage.drawLine({
-            start: { x: start.x / scale, y: height - (start.y / scale) },
-            end: { x: end.x / scale, y: height - (end.y / scale) },
-            thickness: 2,
-            color: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
-        });
-
-        originalPdfBytes = await pdfDocToModify.save();
-        pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
-        await renderPage(currentPage);
-    } catch (error) {
-        console.error('線の書き込みに失敗:', error);
-        alert('線の書き込みに失敗しました。');
-        historyStack.pop(); // エラー時は履歴を元に戻す
+            originalPdfBytes = await pdfDocToModify.save();
+            pdfDoc = await pdfjsLib.getDocument({ data: originalPdfBytes }).promise;
+            await renderPage(currentPage);
+        } catch (error) {
+            console.error('線の書き込みに失敗:', error);
+            alert('線の書き込みに失敗しました。');
+            historyStack.pop();
+        }
     }
-}
-
 </script>
 
 </body>
