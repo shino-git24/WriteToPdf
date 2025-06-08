@@ -56,6 +56,10 @@
             transform: scale(1.1);
         }
     </style>
+
+    <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icon-192x192.png">
+    
 </head>
 <body>
     <h1>PDF書き込みアプリ</h1>
@@ -140,7 +144,7 @@
     let selectedColor = '#ff0000';
     let historyStack = [];
     let japaneseFontBytes = null;
-    let currentViewport = null; // ★修正: 表示中のページのビューポートを保持する変数
+    let currentViewport = null;
 
     // --- 初期化処理 ---
     pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
@@ -225,7 +229,6 @@
     async function renderPage(pageNum) {
         const page = await pdfDoc.getPage(pageNum);
         
-        // ★修正: viewportをグローバル変数に保存し、後続の座標変換で利用する
         currentViewport = page.getViewport({ scale: 1.5 });
         const viewport = currentViewport;
 
@@ -356,15 +359,13 @@
 
         const rect = canvas.getBoundingClientRect();
         const endCoords = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-        
-        // ★修正: キャンバス座標をPDF座標に変換
+    
         if (!currentViewport) return;
         const pdfStart = currentViewport.convertToPdfPoint(startCoords.x, startCoords.y);
         const pdfEnd = currentViewport.convertToPdfPoint(endCoords.x, endCoords.y);
 
         if (currentMode === 'line') {
             if (Math.abs(startCoords.x - endCoords.x) > 2 || Math.abs(startCoords.y - endCoords.y) > 2) {
-                // ★修正: 変換後のPDF座標を渡す
                 addLineToPdf({ x: pdfStart[0], y: pdfStart[1] }, { x: pdfEnd[0], y: pdfEnd[1] });
             }
         } else {
@@ -376,10 +377,9 @@
             };
             if (pdfArea.width > 1 && pdfArea.height > 1) {
                 if (currentMode === 'rect') {
-                    // ★修正: 変換後のPDF座標エリアを渡す
                     addRectToPdf(pdfArea);
                 } else if (currentMode === 'ellipse') {
-                    // ★修正: 変換後のPDF座標エリアを渡す
+
                     addEllipseToPdf(pdfArea);
                 }
             }
@@ -402,7 +402,6 @@
             const text = textArea.value;
             textArea.remove();
             if (text.trim() === '') return;
-            // ★修正: キャンバス座標をPDF座標に変換してから書き込み関数に渡す
             if (!currentViewport) return;
             const pdfPoint = currentViewport.convertToPdfPoint(x, y);
             await addTextToPdf(pdfPoint[0], pdfPoint[1], text);
@@ -447,7 +446,6 @@ async function addTextToPdf(pdfX, pdfY, text) {
                 color: rgb(colorRgb.r, colorRgb.g, colorRgb.b),
             };
 
-            // ★★★★★ 最終修正箇所 ★★★★★
             // デバッグ結果に基づき、正しい座標計算と回転を適用
             switch (pageRotation) {
                 case 90:
@@ -489,7 +487,6 @@ async function addTextToPdf(pdfX, pdfY, text) {
     }
 }
     
-    // ★修正: 引数をPDF座標エリア(pdfRect)に変更
     async function addRectToPdf(pdfRect) {
         try {
             historyStack.push(originalPdfBytes);
@@ -500,7 +497,6 @@ async function addTextToPdf(pdfX, pdfY, text) {
             const targetPage = pages[currentPage - 1];
             const colorRgb = hexToRgb(selectedColor);
 
-            // ★修正: 座標変換の計算を削除
             const drawOptions = {
                 x: pdfRect.x,
                 y: pdfRect.y,
@@ -526,7 +522,6 @@ async function addTextToPdf(pdfX, pdfY, text) {
         }
     }
     
-    // ★修正: 引数をPDF座標エリア(pdfArea)に変更
     async function addEllipseToPdf(pdfArea) {
         try {
             historyStack.push(originalPdfBytes);
@@ -537,7 +532,6 @@ async function addTextToPdf(pdfX, pdfY, text) {
             const targetPage = pages[currentPage - 1];
             const colorRgb = hexToRgb(selectedColor);
 
-            // ★修正: 座標変換の計算を削除
             const drawOptions = {
                 x: pdfArea.x + pdfArea.width / 2,
                 y: pdfArea.y + pdfArea.height / 2,
@@ -563,7 +557,6 @@ async function addTextToPdf(pdfX, pdfY, text) {
         }
     }
 
-    // ★修正: 引数をPDF座標(start, end)に変更
     async function addLineToPdf(start, end) {
         try {
             historyStack.push(originalPdfBytes);
@@ -574,7 +567,6 @@ async function addTextToPdf(pdfX, pdfY, text) {
             const targetPage = pages[currentPage - 1];
             const colorRgb = hexToRgb(selectedColor);
             
-            // ★修正: 座標変換の計算を削除
             targetPage.drawLine({
                 start: { x: start.x, y: start.y },
                 end: { x: end.x, y: end.y },
@@ -592,8 +584,5 @@ async function addTextToPdf(pdfX, pdfY, text) {
         }
     }
 </script>
-  <link rel="manifest" href="https://shino-git24.github.io/WriteToPdf/manifest.json">
-  <link rel="apple-touch-icon" href="https://shino-git24.github.io/WriteToPdf/icon-192x192.png">
-    
 </body>
 </html>
